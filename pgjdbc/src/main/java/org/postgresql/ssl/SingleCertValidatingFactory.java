@@ -10,19 +10,15 @@ import org.postgresql.util.GT;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
-import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
 
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
 
 /**
  * <p>Provides a SSLSocketFactory that authenticates the remote server against an explicit pre-shared
@@ -121,8 +117,18 @@ public class SingleCertValidatingFactory extends WrappedFactory {
             "The sslfactoryarg property must start with the prefix file:, classpath:, env:, sys:, or -----BEGIN CERTIFICATE-----."));
       }
 
+      KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+      // Note: KeyStore requires it be loaded even if you don't load anything into it:
+      ks.load(null);
+      CertificateFactory cf = CertificateFactory.getInstance("X509");
+      X509Certificate cert = (X509Certificate) cf.generateCertificate(in);
+      ks.setCertificateEntry(UUID.randomUUID().toString(), cert);
+      TrustManagerFactory tmf =
+        TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+      tmf.init(ks);
+
       SSLContext ctx = SSLContext.getInstance("TLS");
-      ctx.init(null, new TrustManager[]{new SingleCertTrustManager(in)}, null);
+      ctx.init(null, tmf.getTrustManagers(), null);
       factory = ctx.getSocketFactory();
     } catch (RuntimeException e) {
       throw e;
@@ -139,45 +145,6 @@ public class SingleCertValidatingFactory extends WrappedFactory {
           // ignore
         }
       }
-    }
-  }
-
-  public class SingleCertTrustManager implements X509TrustManager {
-    X509Certificate cert;
-    X509TrustManager trustManager;
-
-    public SingleCertTrustManager(InputStream in) throws IOException, GeneralSecurityException {
-      KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
-      // Note: KeyStore requires it be loaded even if you don't load anything into it:
-      ks.load(null);
-      CertificateFactory cf = CertificateFactory.getInstance("X509");
-      cert = (X509Certificate) cf.generateCertificate(in);
-      ks.setCertificateEntry(UUID.randomUUID().toString(), cert);
-      TrustManagerFactory tmf =
-          TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-      tmf.init(ks);
-      for (TrustManager tm : tmf.getTrustManagers()) {
-        if (tm instanceof X509TrustManager) {
-          trustManager = (X509TrustManager) tm;
-          break;
-        }
-      }
-      if (trustManager == null) {
-        throw new GeneralSecurityException(GT.tr("No X509TrustManager found"));
-      }
-    }
-
-    public void checkClientTrusted(X509Certificate[] chain, String authType)
-        throws CertificateException {
-    }
-
-    public void checkServerTrusted(X509Certificate[] chain, String authType)
-        throws CertificateException {
-      trustManager.checkServerTrusted(chain, authType);
-    }
-
-    public X509Certificate[] getAcceptedIssuers() {
-      return new X509Certificate[]{cert};
     }
   }
 }
